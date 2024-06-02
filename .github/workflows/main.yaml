@@ -1,0 +1,241 @@
+name: Arch AUR Repository Build
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron:  '1 7 * * 0'
+
+jobs:
+  build-x86_64:
+    runs-on: ubuntu-latest
+    name: Build on x86_64
+
+    container:
+      image: archlinux:latest
+
+      options: --privileged
+
+      env:
+        GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        PKGEXT: .pkg.tar.zst
+
+    steps:
+      - name: Set variables
+        id: set-vars
+        run: |
+          echo "::set-output name=date::$(date +'%Y-%m-%d %H:%M')"
+          echo "::set-output name=repo-id::$(echo ${{ github.repository }} | sed 's/\//-/g')"
+
+      - name: Store private key
+        id: gpg
+        run: |
+          echo "$GPG_PRIVATE_KEY" > ${GITHUB_WORKSPACE}/gpg.key
+
+      - name: Prepare repo
+        id: prepare
+        run: |
+          echo "::set-output name=arch::$(uname -m)"
+          curl --output repo.key https://raw.githubusercontent.com/benalexau/aur-repo/master/repo.key
+          pacman-key --init
+          pacman-key --add repo.key
+          pacman-key --lsign-key 6CBCB3F5961ADB179D89F962CBA2EAA0E0BBD35B 
+          pacman -Syyu --noconfirm
+          pacman -S --noconfirm base-devel sudo
+          echo 'auruser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/auruser
+          useradd -m auruser
+          sudo -u auruser gpg --batch --import ${GITHUB_WORKSPACE}/gpg.key
+          rm ${GITHUB_WORKSPACE}/gpg.key
+          curl --output python2-key.asc https://raw.githubusercontent.com/benalexau/aur-repo/master/python2-key.asc
+          sudo -u auruser gpg --batch --import python2-key.asc
+          cd /tmp
+          curl --output aurutils.tar.gz https://aur.archlinux.org/cgit/aur.git/snapshot/aurutils.tar.gz
+          tar xf aurutils.tar.gz
+          chmod -R 777 /tmp/aurutils
+          cd aurutils
+          sudo -u auruser makepkg --syncdeps --noconfirm
+          ls -l
+          pacman -U --noconfirm aurutils-*.pkg.*
+          cp -v /tmp/aurutils/aurutils-*.pkg.* ${GITHUB_WORKSPACE}
+          export REPO_IDENTIFIER="${{ steps.set-vars.outputs.repo-id }}"
+          repo-add ${GITHUB_WORKSPACE}/${REPO_IDENTIFIER}.db.tar.gz ${GITHUB_WORKSPACE}/aurutils-*.pkg.*
+          chmod -R 777 ${GITHUB_WORKSPACE}
+          ls -l ${GITHUB_WORKSPACE}
+          echo "# local repository (required by aur tools to be set up)" >> /etc/pacman.conf
+          echo "[${REPO_IDENTIFIER}]" >> /etc/pacman.conf
+          echo "SigLevel = Optional TrustAll" >> /etc/pacman.conf
+          echo "Server = file://${GITHUB_WORKSPACE} " >> /etc/pacman.conf
+          pacman -Sy --noconfirm
+          # photoprism depends on tensorflow115 so must be built separately
+          sudo -u auruser aur sync --sign -A --noconfirm --noview --database ${REPO_IDENTIFIER} --root ${GITHUB_WORKSPACE} photoprism
+          pacman -Rs --noconfirm tensorflow115
+          pacman -S --noconfirm python-pip python-tensorflow python-pillow
+          export OPENSSL_LIB_DIR=/usr/lib
+          export OPENSSL_INCLUDE_DIR=/usr/include/openssl
+          pacman -S --noconfirm java-runtime-common
+          archlinux-java unset
+          pacman -S --noconfirm jdk-openjdk
+          for pkg in archlinux-java-run etesync-dav jellyfin ledger-udev ledger-live-bin paru zoom google-chrome ipmiview jackett sonarr radarr laminar qrcodegen mediamtx-bin vial-appimage reposilite
+          do
+            echo "### Package ${pkg}"
+            sudo -u auruser aur sync --sign -A --noconfirm --noview --database ${REPO_IDENTIFIER} --root ${GITHUB_WORKSPACE} ${pkg} || echo "!!! Package ${pkg} failed"
+          done
+          chmod -R 777 ${GITHUB_WORKSPACE}
+
+      - name: Remove symbolic links
+        run: |
+          cd ${GITHUB_WORKSPACE}
+          ls -al
+          rm -v ${{ steps.set-vars.outputs.repo-id }}.db ${{ steps.set-vars.outputs.repo-id }}.files
+          cp -v ${{ steps.set-vars.outputs.repo-id }}.db.tar.gz ${{ steps.set-vars.outputs.repo-id }}.db
+          cp -v ${{ steps.set-vars.outputs.repo-id }}.files.tar.gz ${{ steps.set-vars.outputs.repo-id }}.files
+          rm -fv build-log.txt *.sh
+          ls -al
+
+      - name: Remove release
+        uses: cb80/delrel@latest
+        with:
+          tag: ${{ steps.prepare.outputs.arch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.prepare.outputs.arch }}
+          name: Arch Linux AUR Build ${{ github.run_number }} from ${{ steps.set-vars.outputs.date }} for ${{ steps.prepare.outputs.arch }}
+          body: |
+            To use this repository, please append the following to `/etc/pacman.conf`:
+            ```
+            [${{ steps.set-vars.outputs.repo-id }}]
+            SigLevel = Required
+            Server = https://github.com/${{ github.repository }}/releases/download/${{ steps.prepare.outputs.arch }}
+            ```
+            You must also trust the signing key:
+            ```
+            sudo pacman-key --recv-keys 71BDE43D3404BE41F65E5F640A5DAECE044E226C --keyserver hkp://keyserver.ubuntu.com
+            sudo pacman-key --lsign-key 71BDE43D3404BE41F65E5F640A5DAECE044E226C
+            ```
+          artifacts: |
+            ${{ github.workspace }}/*
+          draft: false
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-arm:
+    runs-on: ubuntu-latest
+    name: Build on ${{ matrix.arch }}
+
+    env:
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+
+    strategy:
+      matrix:
+        include:
+          - arch: aarch64
+          - arch: armv7
+
+    steps:
+      - name: Set variables
+        id: set-vars
+        run: |
+          echo "::set-output name=date::$(date +'%Y-%m-%d %H:%M')"
+          echo "::set-output name=repo-id::$(echo ${{ github.repository }} | sed 's/\//-/g')"
+
+      - name: Store private key
+        id: gpg
+        run: |
+          echo "$GPG_PRIVATE_KEY" > ${{ runner.temp }}/gpg.key
+
+      - name: Prepare repo
+        id: prepare
+        uses: uraimo/run-on-arch-action@v2
+        with:
+          arch: ${{ matrix.arch }}
+          distro: archarm_latest
+
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+
+          dockerRunArgs: |
+            --volume "${{ runner.temp }}:/workspace"
+
+          env: |
+            PKGEXT: .pkg.tar.zst
+            REPO_IDENTIFIER: ${{ steps.set-vars.outputs.repo-id }}
+
+          shell: /bin/sh
+
+          run: |
+            echo "::set-output name=arch::$(uname -m)"
+            curl --output repo.key https://raw.githubusercontent.com/benalexau/aur-repo/master/repo.key
+            pacman-key --init
+            pacman-key --add repo.key
+            pacman-key --lsign-key 71BDE43D3404BE41F65E5F640A5DAECE044E226C
+            rm repo.key
+            pacman -Syyu --noconfirm
+            pacman -S --noconfirm base-devel sudo
+            echo 'auruser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/auruser
+            useradd -m auruser
+            sudo -u auruser gpg --batch --import /workspace/gpg.key
+            rm /workspace/gpg.key
+            cd /tmp
+            curl --output aurutils.tar.gz https://aur.archlinux.org/cgit/aur.git/snapshot/aurutils.tar.gz
+            tar xf aurutils.tar.gz
+            chmod -R 777 /tmp/aurutils
+            cd aurutils
+            sudo -u auruser makepkg --syncdeps --noconfirm
+            ls -l
+            pacman -U --noconfirm aurutils-*.pkg.*
+            cp -v /tmp/aurutils/aurutils-*.pkg.* /workspace
+            repo-add /workspace/${REPO_IDENTIFIER}.db.tar.gz /workspace/aurutils-*.pkg.*
+            chmod -R 777 /workspace
+            ls -l /workspace
+            echo "# local repository (required by aur tools to be set up)" >> /etc/pacman.conf
+            echo "[${REPO_IDENTIFIER}]" >> /etc/pacman.conf
+            echo "SigLevel = Optional TrustAll" >> /etc/pacman.conf
+            echo "Server = file:///workspace " >> /etc/pacman.conf
+            pacman -Sy --noconfirm
+            pacman -S --noconfirm jre17-openjdk-headless
+            sudo -u auruser aur sync --sign -A --noconfirm --noview --database ${REPO_IDENTIFIER} --root /workspace archlinux-java-run
+            chmod -R 777 /workspace
+
+      - name: Remove symbolic links
+        run: |
+          pwd
+          echo Runner tmp: "${{ runner.temp }}"
+          ls -l
+          cd "${{ runner.temp }}"
+          ls -al
+          rm -v ${{ steps.set-vars.outputs.repo-id }}.db ${{ steps.set-vars.outputs.repo-id }}.files
+          cp -v ${{ steps.set-vars.outputs.repo-id }}.db.tar.gz ${{ steps.set-vars.outputs.repo-id }}.db
+          cp -v ${{ steps.set-vars.outputs.repo-id }}.files.tar.gz ${{ steps.set-vars.outputs.repo-id }}.files
+          rm -fv build-log.txt *.sh
+          ls -al
+
+      - name: Remove release
+        uses: cb80/delrel@latest
+        with:
+          tag: ${{ steps.prepare.outputs.arch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.prepare.outputs.arch }}
+          name: Arch Linux ARM AUR Build ${{ github.run_number }} from ${{ steps.set-vars.outputs.date }} for ${{ steps.prepare.outputs.arch }}
+          body: |
+            To use this repository, please append the following to `/etc/pacman.conf`:
+            ```
+            [${{ steps.set-vars.outputs.repo-id }}]
+            SigLevel = Required
+            Server = https://github.com/${{ github.repository }}/releases/download/${{ steps.prepare.outputs.arch }}
+            ```
+            You must also trust the signing key:
+            ```
+            sudo pacman-key --recv-keys 71BDE43D3404BE41F65E5F640A5DAECE044E226C --keyserver hkp://keyserver.ubuntu.com
+            sudo pacman-key --lsign-key 71BDE43D3404BE41F65E5F640A5DAECE044E226C
+            ```
+          artifacts: |
+            ${{ runner.temp }}/*
+          draft: false
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
