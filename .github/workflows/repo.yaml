@@ -30,8 +30,6 @@ jobs:
           mojo
           gradience-git
           gdm-tools
-        missing_pacman_dependencies: >
-          libusb-compat
           cups
           libglade
           ghostscript
@@ -40,3 +38,6 @@ jobs:
           lib32-gcc-libs
           lib32-lib-cups
           lib32-glibc
+        missing_pacman_dependencies: >
+          libusb-compat
+
