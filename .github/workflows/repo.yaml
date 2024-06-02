@@ -32,3 +32,11 @@ jobs:
           gdm-tools
         missing_pacman_dependencies: >
           libusb-compat
+          cups
+          libglade
+          ghostscript
+          lib32-libxml2
+          lib32-popt
+          lib32-gcc-libs
+          lib32-lib-cups
+          lib32-glibc
