@@ -27,7 +27,6 @@ jobs:
           zinit
           capt-src
           cht.sh-git
-          java-openjfx
           mojo
           gradience-git
           gdm-tools
