@@ -1,0 +1,35 @@
+name: Arch AUR Repository Build
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron:  '1 7 * * 0'
+
+jobs:
+  build_repository:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Build Packages
+      uses: kopp/build-aur-packages@v1
+      with:
+        packages: >
+          azure-cli
+          kwallet-git
+          micronucleus-git
+          snapd
+          pipe.sh 
+          qrcp
+          revanced-cli-bin
+          revanced-integrations-bin
+          revanced-patches-bin
+          tap
+          zinit
+          capt-src
+          cht.sh-git
+          java-openjfx
+          mojo
+          gradience-git
+          gdm-tools
+        missing_pacman_dependencies: >
+          libusb-compat
