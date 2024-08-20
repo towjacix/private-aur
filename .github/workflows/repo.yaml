@@ -40,4 +40,5 @@ jobs:
           lib32-glibc
         missing_pacman_dependencies: >
           libusb-compat
+          glib2
 
