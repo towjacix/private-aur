@@ -29,7 +29,6 @@ jobs:
           cht.sh-git
           mojo
           gradience-git
-          gdm-tools
           cups
           libglade
           ghostscript
@@ -40,5 +39,5 @@ jobs:
           lib32-glibc
         missing_pacman_dependencies: >
           libusb-compat
-          glib2
+         
 
