@@ -63,7 +63,7 @@ jobs:
             # -r repo: specifies the repo name
             # -s: signs the package
             # -u: updates the repository database
-            aur build -c -r repo -s -u --sign-key 51C2CCC3E79F11C8
+            aur build -c -r repo -s -u --sign-key 51C2CCC3E79F11C8 -- -M /root/.gnupg
             cd - # Go back to the root of the repository
           done
         env:
@@ -89,3 +89,4 @@ jobs:
             repo/public-key.asc
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided by GitHub Actions
+
