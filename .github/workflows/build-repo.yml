@@ -43,15 +43,6 @@ jobs:
         env:
           YOUR_GPG_KEY_ID_HERE: <YOUR_GPG_KEY_ID_HERE> # Replace with your GPG key ID
                                                                                                               
-      - name: Configure makepkg for signing
-        run: |
-          # Replace <YOUR_GPG_KEY_ID_HERE> with your actual GPG Key ID
-          sed -i 's/^#GPGKEY=""/GPGKEY="51C2CCC3E79F11C8"/' /etc/makepkg.conf
-          # Ensure BUILDENV contains 'sign' for automatic signing by makepkg
-          sed -i 's/^BUILDENV=(.*)/BUILDENV=(fakeroot !distcc color ccache check sign)/' /etc/makepkg.conf
-        env:
-          YOUR_GPG_KEY_ID_HERE: 51C2CCC3E79F11C8 # Replace with your GPG key ID
-                                                                                                              
       - name: Prepare repository directory
         run: |
           mkdir -p repo/x86_64
@@ -63,29 +54,20 @@ jobs:
                                                                                                               
       - name: Build and add packages to repository
         run: |
-          # Initialize aurutils repository (creates repo.db.tar.gz if it doesn't exist)
-          # -d repo: specifies the directory where the repository files will be stored
-          # -c: creates a clean chroot for each build
-          # -r repo: specifies the name of the repository (used internally by aurutils)
-          # -s: signs the built packages
-          # -u: updates the repository database after adding packages
-          aur sync -d repo -c -r repo -s -u
-                                                                                                              
           for pkgdir in packages/*; do
             pkgname=$(basename "$pkgdir")
             echo "Building $pkgname..."
             cd "$pkgdir"
             # 'aur build' builds the package in a clean chroot and adds it to the specified repo
             # -c: ensures a clean chroot
-            # -d ../../repo: specifies the repository directory relative to the current working directory
             # -r repo: specifies the repo name
             # -s: signs the package
             # -u: updates the repository database
-            aur build -c -d ../../repo -r repo -s -u
+            aur build -c -r repo -s -u --sign-key 51C2CCC3E79F11C8
             cd - # Go back to the root of the repository
           done
         env:
-          AURDEST: ${{ github.workspace }}/repo # aurutils uses AURDEST for the repo directory
+          AURDEST: ${{ github.workspace }}/repo/x86_64 # aurutils uses AURDEST for the repo directory
                                                                                                               
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v1
