@@ -1,0 +1,101 @@
+# .github/workflows/build-repo.yml
+name: Build and Deploy AUR Binary Repo
+                                                                                                              
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/**' # Trigger only if PKGBUILDs or related package files change
+  workflow_dispatch: # Allows manual triggering
+                                                                                                              
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest # Use a standard Ubuntu runner
+                                                                                                              
+    container:
+      image: archlinux/archlinux:latest # Use an Arch Linux Docker image
+      options: --privileged # Needed for systemd-nspawn/chroot if using aurutils
+                                                                                                              
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+                                                                                                              
+      - name: Install build dependencies
+        run: |
+          pacman -Sy --noconfirm
+          pacman -S --noconfirm base-devel devtools git gnupg aurutils # aurutils simplifies chroot builds
+                                                                                                              
+      - name: Import GPG private key
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          # Trust the key (optional, but prevents "no ultimately trusted keys" warnings)
+          # Replace <YOUR_GPG_KEY_ID_HERE> with your actual GPG Key ID (e.g., 0xABCDEF1234567890)
+          echo -e "trust\n5\ny\n" | gpg --batch --command-fd 0 --edit-key 51C2CCC3E79F11C8
+        env:
+          YOUR_GPG_KEY_ID_HERE: <YOUR_GPG_KEY_ID_HERE> # Replace with your GPG key ID
+                                                                                                              
+      - name: Configure makepkg for signing
+        run: |
+          # Replace <YOUR_GPG_KEY_ID_HERE> with your actual GPG Key ID
+          sed -i 's/^#GPGKEY=""/GPGKEY="51C2CCC3E79F11C8"/' /etc/makepkg.conf
+          # Ensure BUILDENV contains 'sign' for automatic signing by makepkg
+          sed -i 's/^BUILDENV=(.*)/BUILDENV=(fakeroot !distcc color ccache check sign)/' /etc/makepkg.conf
+        env:
+          YOUR_GPG_KEY_ID_HERE: 51C2CCC3E79F11C8 # Replace with your GPG key ID
+                                                                                                              
+      - name: Prepare repository directory
+        run: |
+          mkdir -p repo/x86_64
+          # Export public key to include in the release
+          # Replace <YOUR_GPG_KEY_ID_HERE> with your actual GPG Key ID
+          gpg --export --armor 51C2CCC3E79F11C8 > repo/public-key.asc
+        env:
+          YOUR_GPG_KEY_ID_HERE: 51C2CCC3E79F11C8
+                                                                                                              
+      - name: Build and add packages to repository
+        run: |
+          # Initialize aurutils repository (creates repo.db.tar.gz if it doesn't exist)
+          # -d repo: specifies the directory where the repository files will be stored
+          # -c: creates a clean chroot for each build
+          # -r repo: specifies the name of the repository (used internally by aurutils)
+          # -s: signs the built packages
+          # -u: updates the repository database after adding packages
+          aur sync -d repo -c -r repo -s -u
+                                                                                                              
+          for pkgdir in packages/*; do
+            pkgname=$(basename "$pkgdir")
+            echo "Building $pkgname..."
+            cd "$pkgdir"
+            # 'aur build' builds the package in a clean chroot and adds it to the specified repo
+            # -c: ensures a clean chroot
+            # -d ../../repo: specifies the repository directory relative to the current working directory
+            # -r repo: specifies the repo name
+            # -s: signs the package
+            # -u: updates the repository database
+            aur build -c -d ../../repo -r repo -s -u
+            cd - # Go back to the root of the repository
+          done
+        env:
+          AURDEST: ${{ github.workspace }}/repo # aurutils uses AURDEST for the repo directory
+                                                                                                              
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest # Always update the 'latest' release
+          name: Latest AUR Binary Packages
+          body: |
+            Automated build of AUR packages.
+            Built on ${{ github.event.head_commit.timestamp }}
+          draft: false
+          prerelease: false
+          files: |
+            repo/x86_64/*.pkg.tar.zst
+            repo/x86_64/*.pkg.tar.zst.sig
+            repo/repo.db.tar.gz
+            repo/repo.db.tar.gz.sig
+            repo/repo.files.tar.gz
+            repo/repo.files.tar.gz.sig
+            repo/public-key.asc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided by GitHub Actions                
