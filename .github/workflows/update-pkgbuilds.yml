@@ -1,0 +1,64 @@
+# .github/workflows/update-pkgbuilds.yml
+name: Automated PKGBUILD Updater
+                                                                                                                                   
+on:
+  schedule:
+    - cron: '0 0 * * *' # Run daily at midnight UTC. Adjust as needed (e.g., '0 */6 * * *' for every 6 hours)
+  workflow_dispatch: # Allows manual triggering from GitHub Actions tab
+                                                                                                                                   
+jobs:
+  update-pkgbuilds:
+    runs-on: ubuntu-latest
+                                                                                                                                   
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+                                                                                                                                   
+      - name: Install Git
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git
+                                                                                                                                   
+      - name: Update PKGBUILDs from AUR
+        id: update_pkgs
+        run: |
+          # Set a flag to track if any changes were made
+          CHANGES_MADE=false
+                                                                                                                                   
+          # Loop through each package directory in your 'packages/' folder
+          for pkgdir in packages/*; do
+            pkgname=$(basename "$pkgdir")
+            echo "Checking $pkgname for updates..."
+                                                                                                                                   
+            # Clone the official AUR repository for the package
+            # Use a temporary directory to avoid conflicts
+            git clone https://aur.archlinux.org/"$pkgname".git temp_aur_clone
+                                                                                                                                   
+            if [ -d "temp_aur_clone" ]; then
+              # Compare the PKGBUILD from AUR with our local one
+              if ! diff -q "$pkgdir"/PKGBUILD temp_aur_clone/PKGBUILD > /dev/null; then
+                echo "  -> PKGBUILD for $pkgname has changed in AUR. Updating..."
+                cp temp_aur_clone/PKGBUILD "$pkgdir"/PKGBUILD
+                git add "$pkgdir"/PKGBUILD
+                CHANGES_MADE=true
+              else
+                echo "  -> PKGBUILD for $pkgname is up-to-date."
+              fi
+              rm -rf temp_aur_clone
+            else
+              echo "  -> Warning: Could not clone AUR repo for $pkgname. Skipping."
+            fi
+          done
+                                                                                                                                   
+          # Set output to indicate if changes were made
+          echo "changes_made=$CHANGES_MADE" >> "$GITHUB_OUTPUT"
+                                                                                                                                   
+      - name: Commit and Push if changes were made
+        if: steps.update_pkgs.outputs.changes_made == 'true'
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          git commit -m "Automated: Update PKGBUILDs from AUR"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided by GitHub Actions
